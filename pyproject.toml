@@ -1,0 +1,10 @@
+[project]
+name = "blp-workshop-task2-code-generation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mlx-lm>=0.26.3",
+    "smolagents-crew>=0.2.0",
+]
