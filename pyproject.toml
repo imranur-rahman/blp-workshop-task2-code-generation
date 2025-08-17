@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "ai-code-sandbox>=0.2.0",
+    "langchain-sandbox>=0.0.6",
     "mlx-lm>=0.26.3",
     "pandas>=2.3.1",
     "smolagents-crew>=0.2.0",
