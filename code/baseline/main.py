@@ -28,6 +28,7 @@ def load_models():
 def load_examples():
     """Load examples from trial_updated.csv"""
     examples_df = pd.read_csv('data/trial_updated.csv')
+    # examples_df = pd.read_csv('data/dev_v2.csv')
     return examples_df
 
 def generate_code_solutions(model_tokenizer, instruction, examples_df, num_solutions=3):
@@ -37,7 +38,8 @@ def generate_code_solutions(model_tokenizer, instruction, examples_df, num_solut
     
     # Create examples from the examples_df
     examples_text = ""
-    for i, row in examples_df.head(40).iterrows():  # Use first 40 examples
+    sampled_examples = examples_df.sample(n=40, random_state=42)  # Use random seed 42
+    for i, row in sampled_examples.iterrows():
         examples_text += f"""<<instruction>> 
 {row['instruction']}
 
@@ -47,16 +49,19 @@ def generate_code_solutions(model_tokenizer, instruction, examples_df, num_solut
     
     for i in range(num_solutions):
         prompt = f'''
-Generate a Python code based on <<instruction>>.
-Use the examples below.
+Write the function defined in <<instruction>>.
 Create a new class if that helps in writing the solution.
 Do not include any explanations or repeated elements in the output.
+Do not write any test cases.
 
 {examples_text}
 
 Now do this for
 <<instruction>>
 {instruction}
+
+The code needs to pass the following test case:
+{row['test_list']}
 
 <<output>>
 
@@ -87,7 +92,8 @@ def generate_test_cases(model_tokenizer, instruction, examples_df, num_tests=3):
     
     # Create examples from the examples_df
     examples_text = ""
-    for i, row in examples_df.head(40).iterrows():  # Use first 40 examples
+    sampled_examples = examples_df.sample(n=40, random_state=42)  # Use random seed 42
+    for i, row in sampled_examples.iterrows():
         # Parse the test_list string to get the actual list
         try:
             test_list = ast.literal_eval(row['test_list'])
@@ -108,13 +114,22 @@ def generate_test_cases(model_tokenizer, instruction, examples_df, num_tests=3):
 """
     
     prompt = f'''
-Create {num_tests} Python test cases for <<instruction>> and return them as a list. Each test case should use only the assert statement with the expected output. Focus on covering edge cases and maximizing test coverage. Do not include any explanations, natural language, or code beyond the test cases. Do not provide the solution. The output should be a list of assert statements and not a list of lists.
+Create {num_tests} Python test cases for <<instruction>> and return them as a list.
+Each test case should use only the assert statement with the expected output.
+Use the <<given_test_list>> as a guide for the format of the test cases.
+Focus on covering edge cases, empty inputs, and maximizing test coverage.
+Do not include any explanations, natural language, or code beyond the test cases.
+Do not provide the solution.
+The output should be a list of assert statements and not a list of lists.
 
 {examples_text}
 
 Now do this for
 <<instruction>>
 {instruction}
+
+<<given_test_list>>
+{row['test_list']}
 
 <<output>>
 
@@ -134,10 +149,37 @@ Now do this for
     
     return test_cases
 
-def run_code_with_tests(code, test_cases, sandbox):
+def run_code_with_tests(code, test_cases, given_test_list, sandbox):
     """Run code with test cases in secure environment and return pass count"""
     passed_tests = 0
 
+    print(f"Given test cases:\n{given_test_list}\n")
+    # test_cases = test_cases[0] if isinstance(test_cases, list) else test_cases  # Ensure test_cases is a list
+    try:
+        given_test_cases = ast.literal_eval(given_test_list)
+    except Exception as e:
+        print(f"Error evaluating given test cases: {e}")
+        return passed_tests
+
+    for test_case in given_test_cases:
+        try:
+            # Combine code and test case
+            full_code = f"{code}\n\n{test_case}"
+            print(f"Running code:\n{full_code}\n")
+            # Run the code in the reused sandbox
+            # result = sandbox.run_code(full_code)
+            result = sandbox.execute(full_code, timeout_seconds=600)
+            print(f"Result:\n{result}\n")
+            # if result == 'No output': # The code passed the test
+            if result.status == 'success':
+                passed_tests += 1
+            else:
+                print (f"Given test case failed: {test_case}\n")
+                return passed_tests
+        except Exception:
+            print (f"Exception while running given test case: {test_case}\n")
+            return passed_tests
+    
     print(f"Test cases:\n{test_cases}\n")
     # test_cases = test_cases[0] if isinstance(test_cases, list) else test_cases  # Ensure test_cases is a list
     try:
@@ -188,8 +230,8 @@ def process_row(id, row, code_model_tokenizer, test_model_tokenizer, examples_df
     
     # Test each code solution with all test cases using the same sandbox
     for code in code_solutions:
-        passed_count = run_code_with_tests(code, test_cases, sandbox)
-        if passed_count > max_passed:
+        passed_count = run_code_with_tests(code, test_cases, row['test_list'], sandbox)
+        if passed_count > max_passed or (passed_count == max_passed and len(code) < len(best_code)):
             max_passed = passed_count
             best_code = code
     
@@ -223,19 +265,22 @@ def main():
     
     # Load dataset
     print("Loading dataset...")
-    df = pd.read_csv('data/dev_v2.csv')
+    # df = pd.read_csv('data/dev_v2.csv')
+    df = pd.read_csv('data/test_v1.csv')
+    print(f"Dataset contains {len(df)} rows.")
 
     # Create the sandbox
-    sandbox = SyncPyodideSandbox(allow_net=True) # No read, write, network, subprocess permissions
+    sandbox = SyncPyodideSandbox(allow_net=True) # No read, write, subprocess permissions
     # deno needs to be installed for this sandbox
     
     # Process each row
     results = []
     temp_row_for_testing = df.shape[0]  # Use all rows for final submission, but can limit for testing
+    # temp_row_for_testing = 5  # For quick testing
     for idx, row in df.head(temp_row_for_testing).iterrows():
     # for idx, row in df.iterrows():
         print(f"Processing row {idx + 1}/{len(df)}")
-        result = process_row(idx, row, code_model_tokenizer, test_model_tokenizer, examples_df, sandbox, code_solution_count=7, test_case_count=5)
+        result = process_row(idx, row, code_model_tokenizer, test_model_tokenizer, examples_df, sandbox, code_solution_count=4, test_case_count=6)
         results.append(result)
 
     print (f"Processed result:\n {results}")
